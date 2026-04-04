@@ -1,0 +1,153 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# GPUDB — .gitignore
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── CMake build directories ──────────────────────────────────────────────────
+build/
+build-*/
+cmake-build-*/
+out/
+
+# ── CMake generated files ────────────────────────────────────────────────────
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+compile_commands.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
+_deps/
+
+# ── Compiled binaries and libraries ──────────────────────────────────────────
+*.exe
+*.out
+*.app
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.d
+*.slo
+*.lo
+*.la
+
+# ── CUDA specific ────────────────────────────────────────────────────────────
+*.cubin
+*.fatbin
+*.ptx
+*.gpu
+*.i
+*.ii
+*.stub.c
+
+# ── IDE and editor files ────────────────────────────────────────────────────
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# CLion / JetBrains
+.idea/
+*.iml
+cmake-build-debug/
+cmake-build-release/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+tags
+
+# Emacs
+\#*\#
+*.elc
+.dir-locals.el
+
+# ── OS generated files ──────────────────────────────────────────────────────
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+[Dd]esktop.ini
+
+# Linux
+.directory
+
+# ── Test & profiling artifacts ───────────────────────────────────────────────
+*.log
+*.prof
+*.ncu-rep
+*.nsys-rep
+*.qdrep
+*.sqlite
+*.csv.results
+perf.data
+perf.data.old
+results/
+
+# ── Benchmark output ────────────────────────────────────────────────────────
+benchmark_results/
+*.benchmark.json
+
+# ── Data files (user-supplied, not tracked) ──────────────────────────────────
+data/
+*.csv
+!tests/**/*.csv
+
+# ── Package managers ─────────────────────────────────────────────────────────
+vcpkg_installed/
+conan/
+conanbuildinfo.*
+conanfile.txt
+conaninfo.txt
+graph_info.json
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.orig
+*.rej
+*.patch
+core
+core.*
