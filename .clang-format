@@ -1,0 +1,31 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '<[a-z_]+>'       # C++ standard headers
+    Priority:        1
+  - Regex:           '<cuda.*>'        # CUDA headers
+    Priority:        2
+  - Regex:           '<hip/.*>'        # HIP headers
+    Priority:        2
+  - Regex:           '<sycl/.*>'       # SYCL headers
+    Priority:        2
+  - Regex:           '".*"'            # Project headers
+    Priority:        3
+PointerAlignment: Left
+SortIncludes: CaseInsensitive
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+Standard: c++17
+TabWidth: 4
+UseTab: Never

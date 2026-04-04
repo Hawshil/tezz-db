@@ -1,0 +1,67 @@
+name: CI — Build & Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── CPU-only build (no GPU required) ──────────────────────────────────────
+  build-cpu:
+    name: CPU Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ ninja-build
+
+      - name: Configure (CPU-only, no CUDA)
+        run: >
+          cmake -S . -B build
+          -DUSE_CUDA=OFF
+          -DBUILD_TESTS=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpudb-cpu-${{ matrix.os }}
+          path: build/gpudb_demo*
+          retention-days: 7
+
+  # ── CUDA build (self-hosted GPU runner) ───────────────────────────────────
+  build-cuda:
+    name: CUDA Build + Test
+    runs-on: [self-hosted, gpu, cuda]
+    if: github.event_name == 'push'  # skip on PRs to save GPU time
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (CUDA + Tests)
+        run: >
+          cmake -S . -B build
+          -DUSE_CUDA=ON
+          -DBUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run correctness tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run benchmark (smoke test)
+        run: ./build/gpudb_gpu_bench
+        timeout-minutes: 5
