@@ -46,8 +46,11 @@ std::string valueToString(const Value& v) {
     return std::visit([](const auto& val) -> std::string {
         using T = std::decay_t<decltype(val)>;
         if constexpr (std::is_same_v<T, std::monostate>) return "NULL";
-        if constexpr (std::is_same_v<T, std::string>)    return val;
-        else return std::to_string(val);
+        else if constexpr (std::is_same_v<T, std::string>) return val;
+        else if constexpr (std::is_same_v<T, std::int32_t>) return std::to_string(val);
+        else if constexpr (std::is_same_v<T, std::int64_t>) return std::to_string(val);
+        else if constexpr (std::is_same_v<T, double>) return std::to_string(val);
+        else return "?";
     }, v);
 }
 

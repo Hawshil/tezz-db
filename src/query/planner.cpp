@@ -41,7 +41,7 @@ std::unique_ptr<OperatorNode> QueryPlanner::plan(const SelectStmt& stmt,
     }
 
     // 2. ScanNode (leaf).
-    auto node = std::make_unique<ScanNode>(stmt.from_table, scan_cols);
+    std::unique_ptr<OperatorNode> node = std::make_unique<ScanNode>(stmt.from_table, scan_cols);
 
     // 3. FilterNode (if WHERE clause present).
     if (stmt.where_clause) {
