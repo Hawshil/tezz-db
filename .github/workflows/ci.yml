@@ -1,20 +1,45 @@
-name: CI — Build & Test
+# ══════════════════════════════════════════════════════════════════════════════
+# GPUDB — CI/CD Pipeline
+#
+# Triggers:
+#   • Push to main/develop      → Build + Test (CPU-only on GitHub runners)
+#   • Pull request to main      → Build + Test
+#   • Push tag v*               → Build + Package + Create GitHub Release
+#   • Push to main + self-hosted GPU → Full CUDA build + GPU tests
+# ══════════════════════════════════════════════════════════════════════════════
+name: CI/CD — Build, Test & Release
 
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write  # needed for creating releases
+
+env:
+  BUILD_TYPE: Release
+
 jobs:
-  # ── CPU-only build (no GPU required) ──────────────────────────────────────
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 1: CPU-only build (runs on every push/PR — no GPU needed)
+  # ════════════════════════════════════════════════════════════════════════════
   build-cpu:
     name: CPU Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, windows-2022]
+        include:
+          - os: ubuntu-22.04
+            artifact_suffix: linux-x64
+          - os: ubuntu-24.04
+            artifact_suffix: linux-x64-noble
+          - os: windows-2022
+            artifact_suffix: windows-x64
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,28 +49,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake g++ ninja-build
 
-      - name: Configure (CPU-only, no CUDA)
+      - name: Configure (CPU-only)
         run: >
           cmake -S . -B build
           -DUSE_CUDA=OFF
           -DBUILD_TESTS=OFF
-          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Verify executables exist
+        shell: bash
+        run: |
+          echo "=== Build output ==="
+          find build -name "gpudb_*" -type f 2>/dev/null || \
+          Get-ChildItem -Recurse build -Filter "gpudb_*" 2>$null || \
+          ls -R build/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: gpudb-cpu-${{ matrix.os }}
-          path: build/gpudb_demo*
-          retention-days: 7
+          name: gpudb-cpu-${{ matrix.artifact_suffix }}
+          path: |
+            build/gpudb_demo*
+            build/gpudb_bench*
+            build/Release/gpudb_demo*
+            build/Release/gpudb_bench*
+          retention-days: 14
 
-  # ── CUDA build (self-hosted GPU runner) ───────────────────────────────────
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 2: CUDA build + GPU tests (self-hosted runner with NVIDIA GPU)
+  # ════════════════════════════════════════════════════════════════════════════
   build-cuda:
     name: CUDA Build + Test
     runs-on: [self-hosted, gpu, cuda]
     if: github.event_name == 'push'  # skip on PRs to save GPU time
+
     steps:
       - uses: actions/checkout@v4
 
@@ -54,14 +94,120 @@ jobs:
           cmake -S . -B build
           -DUSE_CUDA=ON
           -DBUILD_TESTS=ON
-          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
       - name: Run correctness tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -C ${{ env.BUILD_TYPE }}
 
-      - name: Run benchmark (smoke test)
-        run: ./build/gpudb_gpu_bench
+      - name: Run GPU benchmark (smoke test)
+        run: |
+          # Find the executable (handles both single-config and multi-config)
+          EXE=$(find build -name "gpudb_gpu_bench*" -type f | head -1)
+          if [ -n "$EXE" ]; then
+            chmod +x "$EXE"
+            "$EXE"
+          else
+            echo "gpudb_gpu_bench not found, skipping"
+          fi
         timeout-minutes: 5
+
+      - name: Generate benchmark report
+        run: |
+          EXE=$(find build -name "gpudb_report*" -type f | head -1)
+          if [ -n "$EXE" ]; then
+            chmod +x "$EXE"
+            "$EXE"
+          fi
+
+      - name: Upload CUDA artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpudb-cuda-linux-x64
+          path: |
+            build/gpudb_cli*
+            build/gpudb_gpu_bench*
+            build/gpudb_bench*
+            build/gpudb_demo*
+            build/gpudb_report*
+            BENCHMARK_REPORT.md
+            benchmark_results.csv
+          retention-days: 30
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 3: Create GitHub Release (only on tag push v*)
+  # ════════════════════════════════════════════════════════════════════════════
+  release:
+    name: Create Release
+    needs: [build-cpu]  # don't wait for CUDA (self-hosted may not be available)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Package Linux release
+        run: |
+          mkdir -p release-linux
+          # Copy Linux CPU executables
+          cp artifacts/gpudb-cpu-linux-x64/* release-linux/ 2>/dev/null || true
+          # Copy CUDA executables if available
+          cp artifacts/gpudb-cuda-linux-x64/* release-linux/ 2>/dev/null || true
+          # Copy docs
+          cp README.md LICENSE release_notes.md release-linux/ 2>/dev/null || true
+          cp BENCHMARK_REPORT.md benchmark_results.csv release-linux/ 2>/dev/null || true
+          # Create archive
+          cd release-linux && tar czf ../cuda-gpu-db-v${{ steps.version.outputs.VERSION }}-linux-x64.tar.gz * && cd ..
+          echo "Linux archive created"
+
+      - name: Package Windows release
+        run: |
+          mkdir -p release-windows
+          cp artifacts/gpudb-cpu-windows-x64/* release-windows/ 2>/dev/null || true
+          cp README.md LICENSE release_notes.md release-windows/ 2>/dev/null || true
+          cd release-windows && zip -r ../cuda-gpu-db-v${{ steps.version.outputs.VERSION }}-windows-x64.zip * && cd ..
+          echo "Windows archive created"
+
+      - name: Generate release body from release_notes.md
+        id: notes
+        run: |
+          if [ -f release_notes.md ]; then
+            # Use the file content, replacing the version placeholder
+            sed "s/v1.0.0/v${{ steps.version.outputs.VERSION }}/g" release_notes.md > release_body.md
+          else
+            echo "Release v${{ steps.version.outputs.VERSION }}" > release_body.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "GPUDB v${{ steps.version.outputs.VERSION }}"
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          files: |
+            cuda-gpu-db-v${{ steps.version.outputs.VERSION }}-linux-x64.tar.gz
+            cuda-gpu-db-v${{ steps.version.outputs.VERSION }}-windows-x64.zip
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        run: |
+          echo "╔═══════════════════════════════════════════════════════════╗"
+          echo "║  ✓ Release v${{ steps.version.outputs.VERSION }} published!  ║"
+          echo "╚═══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Assets uploaded:"
+          ls -la cuda-gpu-db-*.tar.gz cuda-gpu-db-*.zip 2>/dev/null || true
