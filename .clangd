@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - "-std=c++17"
+    - "-Wno-c++17-extensions"
+  Remove:
+    - "-std=c++14"
+    - "-std=c++11"
+
+Diagnostics:
+  UnusedIncludes: None
+  Suppress:
+    - "pp_file_not_found"         # CUDA headers not found by clangd
+    - "unknown_type_name"         # CUDA types __global__, etc.

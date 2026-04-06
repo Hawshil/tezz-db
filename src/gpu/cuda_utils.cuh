@@ -12,12 +12,36 @@
 namespace gpudb {
 
 // ── CUDA_CHECK macro ────────────────────────────────────────────────────────
+// Wraps every cudaMalloc, cudaMemcpy, cudaFree, etc.
+// Catches and logs hardware errors instantly — kernels never fail silently.
 #define CUDA_CHECK(call)                                                       \
   do {                                                                         \
     cudaError_t err = (call);                                                  \
     if (err != cudaSuccess) {                                                  \
-      std::fprintf(stderr, "CUDA error at %s:%d — %s\n", __FILE__, __LINE__,   \
-                   cudaGetErrorString(err));                                   \
+      std::fprintf(stderr, "[CUDA ERROR] %s:%d — %s (code %d)\n",             \
+                   __FILE__, __LINE__, cudaGetErrorString(err), (int)err);     \
+      std::exit(EXIT_FAILURE);                                                 \
+    }                                                                          \
+  } while (0)
+
+// Checks for asynchronous kernel launch errors (invalid config, etc.)
+#define CUDA_CHECK_KERNEL()                                                    \
+  do {                                                                         \
+    cudaError_t err = cudaGetLastError();                                       \
+    if (err != cudaSuccess) {                                                  \
+      std::fprintf(stderr, "[CUDA KERNEL LAUNCH ERROR] %s:%d — %s\n",         \
+                   __FILE__, __LINE__, cudaGetErrorString(err));               \
+      std::exit(EXIT_FAILURE);                                                 \
+    }                                                                          \
+  } while (0)
+
+// Full sync + check — use after kernel launch to catch execution errors
+#define CUDA_CHECK_LAST()                                                      \
+  do {                                                                         \
+    cudaError_t err = cudaDeviceSynchronize();                                  \
+    if (err != cudaSuccess) {                                                  \
+      std::fprintf(stderr, "[CUDA SYNC ERROR] %s:%d — %s\n",                  \
+                   __FILE__, __LINE__, cudaGetErrorString(err));               \
       std::exit(EXIT_FAILURE);                                                 \
     }                                                                          \
   } while (0)

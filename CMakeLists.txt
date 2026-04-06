@@ -74,6 +74,7 @@ if(USE_CUDA)
         src/gpu/gpu_compressed.cu
         src/gpu/gpu_gather.cu
         src/gpu/gpu_graph.cu
+        src/gpu/gpu_pool_benchmark.cu
         src/gpu/arrow_gpu_transfer.cu
         src/backend/cuda_backend.cu
     )
@@ -123,24 +124,54 @@ if(USE_CUDA)
     endif()
 endif()
 
-# ── Google Test suite ────────────────────────────────────────────────────────
+# ── Google Test suite (modular per-component tests) ──────────────────────────
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)
-    add_executable(gpudb_tests tests/test_correctness.cpp)
-    target_include_directories(gpudb_tests PRIVATE src)
+    enable_testing()
+
+    # Parser tests (CPU-only, no GPU needed)
+    add_executable(test_parser tests/parser_test.cpp)
+    target_include_directories(test_parser PRIVATE src)
+    target_link_libraries(test_parser PRIVATE
+        GTest::gtest GTest::gtest_main gpudb_core gpudb_sql)
+    add_test(NAME parser COMMAND test_parser)
+
+    # Arrow bridge tests (CPU-only, requires Arrow)
+    add_executable(test_arrow tests/arrow_bridge_test.cpp)
+    target_include_directories(test_arrow PRIVATE src)
+    target_link_libraries(test_arrow PRIVATE
+        GTest::gtest GTest::gtest_main gpudb_core gpudb_io)
+    if(HAVE_ARROW)
+        target_compile_definitions(test_arrow PRIVATE GPUDB_HAS_ARROW=1)
+    endif()
+    add_test(NAME arrow_bridge COMMAND test_arrow)
+
+    # GPU kernel tests (requires CUDA)
     if(USE_CUDA)
-        target_link_libraries(gpudb_tests PRIVATE
+        add_executable(test_gpu tests/gpu_filter_test.cu)
+        target_include_directories(test_gpu PRIVATE src)
+        target_link_libraries(test_gpu PRIVATE
+            GTest::gtest gpudb_gpu gpudb_core)
+        target_compile_definitions(test_gpu PRIVATE USE_CUDA=1)
+        add_test(NAME gpu_kernels COMMAND test_gpu)
+    endif()
+
+    # Full integration tests
+    add_executable(test_integration tests/test_correctness.cpp)
+    target_include_directories(test_integration PRIVATE src)
+    if(USE_CUDA)
+        target_link_libraries(test_integration PRIVATE
             GTest::gtest GTest::gtest_main
             gpudb_core gpudb_io gpudb_query gpudb_gpu)
-        target_compile_definitions(gpudb_tests PRIVATE USE_CUDA=1)
+        target_compile_definitions(test_integration PRIVATE USE_CUDA=1)
     else()
-        target_link_libraries(gpudb_tests PRIVATE
+        target_link_libraries(test_integration PRIVATE
             GTest::gtest GTest::gtest_main
             gpudb_core gpudb_io gpudb_query)
     endif()
     if(HAVE_ARROW)
-        target_compile_definitions(gpudb_tests PRIVATE GPUDB_HAS_ARROW=1)
+        target_compile_definitions(test_integration PRIVATE GPUDB_HAS_ARROW=1)
     endif()
-    enable_testing()
-    add_test(NAME correctness COMMAND gpudb_tests)
+    add_test(NAME integration COMMAND test_integration)
 endif()
+

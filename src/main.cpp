@@ -85,13 +85,13 @@ int main() {
         .addColumn("year",     DataType::INT32)
         .build();
 
-    Int64Column   ids({1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010});
-    Float64Column amts({250.00, 430.50, 120.75, 890.00, 345.25,
+    Int64Column   ids(std::vector<std::int64_t>{1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010});
+    Float64Column amts(std::vector<double>{250.00, 430.50, 120.75, 890.00, 345.25,
                         560.00, 215.50, 780.00,  95.25, 670.00});
     StringColumn  regions(std::vector<std::string>{
         "North","South","North","East","West",
         "North","South","East","West","North"});
-    Int32Column   years({2023, 2024, 2024, 2025, 2023, 2025, 2024, 2024, 2025, 2024});
+    Int32Column   years(std::vector<std::int32_t>{2023, 2024, 2024, 2025, 2023, 2025, 2024, 2024, 2025, 2024});
 
     Table sales("sales",
                 {"order_id", "amount", "region", "year"},
