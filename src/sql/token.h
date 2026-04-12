@@ -17,6 +17,12 @@ enum class TokenType {
     KW_ASC, KW_DESC,
     // Aggregate keywords
     KW_SUM, KW_COUNT, KW_AVG, KW_MIN, KW_MAX,
+    // Window-function keywords
+    KW_OVER, KW_PARTITION, KW_ROWS, KW_PRECEDING,
+    KW_UNBOUNDED, KW_FOLLOWING, KW_CURRENT,
+    KW_SMA, KW_EMA, KW_ROLLING_STD,
+    // ASOF join keywords
+    KW_ASOF, KW_TOLERANCE,
     // Literals
     LIT_INTEGER, LIT_FLOAT, LIT_STRING,
     // Identifier
@@ -54,6 +60,18 @@ inline std::string token_type_name(TokenType t) {
         case TokenType::KW_AVG:       return "KW_AVG";
         case TokenType::KW_MIN:       return "KW_MIN";
         case TokenType::KW_MAX:       return "KW_MAX";
+        case TokenType::KW_OVER:      return "KW_OVER";
+        case TokenType::KW_PARTITION: return "KW_PARTITION";
+        case TokenType::KW_ROWS:      return "KW_ROWS";
+        case TokenType::KW_PRECEDING: return "KW_PRECEDING";
+        case TokenType::KW_UNBOUNDED: return "KW_UNBOUNDED";
+        case TokenType::KW_FOLLOWING: return "KW_FOLLOWING";
+        case TokenType::KW_CURRENT:   return "KW_CURRENT";
+        case TokenType::KW_SMA:       return "KW_SMA";
+        case TokenType::KW_EMA:       return "KW_EMA";
+        case TokenType::KW_ROLLING_STD: return "KW_ROLLING_STD";
+        case TokenType::KW_ASOF:      return "KW_ASOF";
+        case TokenType::KW_TOLERANCE: return "KW_TOLERANCE";
         case TokenType::LIT_INTEGER:  return "LIT_INTEGER";
         case TokenType::LIT_FLOAT:    return "LIT_FLOAT";
         case TokenType::LIT_STRING:   return "LIT_STRING";
@@ -106,6 +124,18 @@ inline const std::unordered_map<std::string, TokenType>& keyword_map() {
         {"SUM",    TokenType::KW_SUM},    {"COUNT", TokenType::KW_COUNT},
         {"AVG",    TokenType::KW_AVG},    {"MIN",   TokenType::KW_MIN},
         {"MAX",    TokenType::KW_MAX},
+        {"OVER",       TokenType::KW_OVER},
+        {"PARTITION",  TokenType::KW_PARTITION},
+        {"ROWS",       TokenType::KW_ROWS},
+        {"PRECEDING",  TokenType::KW_PRECEDING},
+        {"UNBOUNDED",  TokenType::KW_UNBOUNDED},
+        {"FOLLOWING",  TokenType::KW_FOLLOWING},
+        {"CURRENT",    TokenType::KW_CURRENT},
+        {"SMA",        TokenType::KW_SMA},
+        {"EMA",        TokenType::KW_EMA},
+        {"ROLLING_STD", TokenType::KW_ROLLING_STD},
+        {"ASOF",        TokenType::KW_ASOF},
+        {"TOLERANCE",   TokenType::KW_TOLERANCE},
     };
     return m;
 }

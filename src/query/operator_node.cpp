@@ -4,6 +4,7 @@
  */
 #include "operator_node.h"
 #include "../core/schema.h"
+#include "../backend/gpu_backend.h"
 
 #include <algorithm>
 #include <cmath>
@@ -326,8 +327,152 @@ std::string AggregateNode::toString(int indent) const {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SortNode
+// WindowNode
 // ─────────────────────────────────────────────────────────────────────────────
+
+WindowNode::WindowNode(WindowSpec spec) : spec_(std::move(spec)) {}
+
+std::vector<double> WindowNode::computeSMA(const std::vector<double>& vals, int w) {
+    const std::size_t n = vals.size();
+    std::vector<double> out(n);
+    double running = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        running += vals[i];
+        if (static_cast<int>(i) >= w) running -= vals[i - w];
+        int count = (static_cast<int>(i) < w) ? static_cast<int>(i) + 1 : w;
+        out[i] = running / count;
+    }
+    return out;
+}
+
+std::vector<double> WindowNode::computeEMA(const std::vector<double>& vals, int w) {
+    const std::size_t n = vals.size();
+    std::vector<double> out(n);
+    if (n == 0) return out;
+    double alpha = 2.0 / (w + 1);
+    out[0] = vals[0];
+    for (std::size_t i = 1; i < n; ++i)
+        out[i] = alpha * vals[i] + (1.0 - alpha) * out[i - 1];
+    return out;
+}
+
+std::vector<double> WindowNode::computeRollingStd(const std::vector<double>& vals, int w) {
+    const std::size_t n = vals.size();
+    std::vector<double> out(n);
+    double sumX = 0.0, sumX2 = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        sumX  += vals[i];
+        sumX2 += vals[i] * vals[i];
+        if (static_cast<int>(i) >= w) {
+            sumX  -= vals[i - w];
+            sumX2 -= vals[i - w] * vals[i - w];
+        }
+        int count = (static_cast<int>(i) < w) ? static_cast<int>(i) + 1 : w;
+        if (count < 2) {
+            out[i] = 0.0;
+        } else {
+            double mean = sumX / count;
+            double var  = sumX2 / count - mean * mean;
+            out[i] = (var > 0.0) ? std::sqrt(var) : 0.0;
+        }
+    }
+    return out;
+}
+
+Table WindowNode::execute(const ExecutionContext& ctx) {
+    Table input = input_->execute(ctx);
+
+    // (a) Sort by order_by_col if specified.
+    if (!spec_.order_by_col.empty()) {
+        auto col_idx = input.findColumnIndex(spec_.order_by_col);
+        if (!col_idx)
+            throw std::runtime_error("WindowNode: ORDER BY column '" +
+                                     spec_.order_by_col + "' not found");
+        std::vector<std::size_t> indices(input.numRows());
+        std::iota(indices.begin(), indices.end(), 0);
+        const auto& sort_col = input.getColumn(*col_idx);
+        std::sort(indices.begin(), indices.end(),
+                  [&](std::size_t a, std::size_t b) {
+                      Value va = getColumnValue(sort_col, a);
+                      Value vb = getColumnValue(sort_col, b);
+                      if (isNumeric(va) && isNumeric(vb))
+                          return toDouble(va) < toDouble(vb);
+                      return valueToString(va) < valueToString(vb);
+                  });
+        input = selectRows(input, indices, input.name());
+    }
+
+    // (b) Extract input_col as vector<double>.
+    auto in_idx = input.findColumnIndex(spec_.input_col);
+    if (!in_idx)
+        throw std::runtime_error("WindowNode: input column '" +
+                                 spec_.input_col + "' not found");
+    const std::size_t nrows = input.numRows();
+    std::vector<double> vals(nrows);
+    for (std::size_t i = 0; i < nrows; ++i)
+        vals[i] = toDouble(getColumnValue(input.getColumn(*in_idx), i));
+
+    // (c) Dispatch: GPU path if backend is set and row count is large enough.
+    std::vector<double> result(nrows);
+#ifdef USE_CUDA
+    if (gpu_ && static_cast<int>(nrows) > GPU_THRESHOLD) {
+        // GPU path
+        void* d_in_raw  = gpu_->allocate(nrows * sizeof(double));
+        void* d_out_raw = gpu_->allocate(nrows * sizeof(double));
+        gpu_->copyToDevice(d_in_raw, vals.data(), nrows * sizeof(double));
+
+        auto* d_in  = static_cast<double*>(d_in_raw);
+        auto* d_out = static_cast<double*>(d_out_raw);
+
+        if (spec_.func == "SMA")
+            gpu_->windowSMA(d_in, static_cast<int>(nrows), spec_.window_size, d_out);
+        else if (spec_.func == "EMA")
+            gpu_->windowEMA(d_in, static_cast<int>(nrows), spec_.window_size, d_out);
+        else if (spec_.func == "ROLLING_STD")
+            gpu_->windowRollingStd(d_in, static_cast<int>(nrows), spec_.window_size, d_out);
+        else {
+            gpu_->deallocate(d_in_raw);
+            gpu_->deallocate(d_out_raw);
+            throw std::runtime_error("WindowNode: unknown function '" + spec_.func + "'");
+        }
+
+        gpu_->copyToHost(result.data(), d_out_raw, nrows * sizeof(double));
+        gpu_->sync();
+        gpu_->deallocate(d_in_raw);
+        gpu_->deallocate(d_out_raw);
+    } else
+#endif
+    {
+        // CPU path
+        if (spec_.func == "SMA")
+            result = computeSMA(vals, spec_.window_size);
+        else if (spec_.func == "EMA")
+            result = computeEMA(vals, spec_.window_size);
+        else if (spec_.func == "ROLLING_STD")
+            result = computeRollingStd(vals, spec_.window_size);
+        else
+            throw std::runtime_error("WindowNode: unknown function '" +
+                                     spec_.func + "'");
+    }
+
+    // (d) Append result column to a copy of the table.
+    Float64Column out_col(std::move(result));
+    input.addColumn(spec_.output_col, ColumnVariant(std::move(out_col)));
+    return input;
+}
+
+std::string WindowNode::toString(int indent) const {
+    std::string pad(indent * 2, ' ');
+    std::string s = pad + "WindowNode(" + spec_.func + "(" +
+                    spec_.input_col + ", " +
+                    std::to_string(spec_.window_size) +
+                    ") ORDER BY " + spec_.order_by_col + ")\n";
+    if (input_) s += input_->toString(indent + 1);
+    return s;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SortNode
 
 SortNode::SortNode(std::string column, bool ascending)
     : column_(std::move(column)), ascending_(ascending) {}
@@ -470,6 +615,155 @@ std::string HashJoinNode::toString(int indent) const {
     std::string pad(indent * 2, ' ');
     return pad + "HashJoinNode(" + build_table_ + "." + build_col_ +
            " = " + probe_table_ + "." + probe_col_ + ")";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AsofJoinNode
+// ─────────────────────────────────────────────────────────────────────────────
+
+AsofJoinNode::AsofJoinNode(Spec spec) : spec_(std::move(spec)) {}
+
+Table AsofJoinNode::cpuAsofJoin(const Table& left, const Table& right) const {
+    // Locate timestamp columns
+    auto left_ts_idx  = left.findColumnIndex(spec_.left_ts_col);
+    auto right_ts_idx = right.findColumnIndex(spec_.right_ts_col);
+    if (!left_ts_idx)
+        throw std::runtime_error("AsofJoinNode: left ts column '" +
+                                 spec_.left_ts_col + "' not found");
+    if (!right_ts_idx)
+        throw std::runtime_error("AsofJoinNode: right ts column '" +
+                                 spec_.right_ts_col + "' not found");
+
+    const auto& left_ts_col  = std::get<Int64Column>(left.getColumn(*left_ts_idx));
+    const auto& right_ts_col = std::get<Int64Column>(right.getColumn(*right_ts_idx));
+    const std::size_t n_left  = left_ts_col.size();
+    const std::size_t n_right = right_ts_col.size();
+
+    // Optional: locate key columns
+    bool use_key = !spec_.left_key.empty() && !spec_.right_key.empty();
+    const Int32Column* lk_col = nullptr;
+    const Int32Column* rk_col = nullptr;
+    const Int64Column* lk64_col = nullptr;
+    const Int64Column* rk64_col = nullptr;
+    bool key_is_int64 = false;
+
+    if (use_key) {
+        auto lk_idx = left.findColumnIndex(spec_.left_key);
+        auto rk_idx = right.findColumnIndex(spec_.right_key);
+        if (!lk_idx || !rk_idx)
+            throw std::runtime_error("AsofJoinNode: key columns not found");
+
+        // Support both INT32 and INT64 key columns
+        const auto& lk_var = left.getColumn(*lk_idx);
+        const auto& rk_var = right.getColumn(*rk_idx);
+        if (std::holds_alternative<Int32Column>(lk_var)) {
+            lk_col = &std::get<Int32Column>(lk_var);
+            rk_col = &std::get<Int32Column>(rk_var);
+        } else if (std::holds_alternative<Int64Column>(lk_var)) {
+            lk64_col = &std::get<Int64Column>(lk_var);
+            rk64_col = &std::get<Int64Column>(rk_var);
+            key_is_int64 = true;
+        }
+    }
+
+    // Build sorted index of right rows by timestamp (already assumed sorted)
+    // For each left row, binary search right for the rightmost right_ts <= left_ts
+    // with matching key (if use_key).
+    std::vector<int> match_idx(n_left, -1);
+
+    for (std::size_t i = 0; i < n_left; ++i) {
+        std::int64_t lt = left_ts_col[i];
+        int lo = 0, hi = static_cast<int>(n_right) - 1, best = -1;
+
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (right_ts_col[mid] <= lt) {
+                if (!use_key) {
+                    best = mid;
+                } else if (key_is_int64) {
+                    if ((*lk64_col)[i] == (*rk64_col)[mid])
+                        best = mid;
+                } else if (lk_col) {
+                    if ((*lk_col)[i] == (*rk_col)[mid])
+                        best = mid;
+                }
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+
+        // Apply tolerance
+        if (best != -1 && spec_.tolerance_ns > 0 &&
+            (lt - right_ts_col[best]) > spec_.tolerance_ns)
+            best = -1;
+
+        match_idx[i] = best;
+    }
+
+    // Build output table
+    std::vector<std::string> out_names;
+    std::vector<ColumnVariant> out_cols;
+
+    // Left-side columns (prefixed)
+    for (std::size_t c = 0; c < left.numCols(); ++c) {
+        out_names.push_back(spec_.left_table + "." + left.columnNames()[c]);
+        std::visit([&](const auto& typed_src) {
+            using ColT = std::decay_t<decltype(typed_src)>;
+            ColT col;
+            col.reserve(n_left);
+            for (std::size_t i = 0; i < n_left; ++i)
+                col.pushValue(typed_src[i]);
+            out_cols.emplace_back(std::move(col));
+        }, left.getColumn(c));
+    }
+
+    // Right-side columns (prefixed, with NULLs for unmatched)
+    for (std::size_t c = 0; c < right.numCols(); ++c) {
+        out_names.push_back(spec_.right_table + "." + right.columnNames()[c]);
+        std::visit([&](const auto& typed_src) {
+            using ColT = std::decay_t<decltype(typed_src)>;
+            ColT col;
+            col.reserve(n_left);
+            for (std::size_t i = 0; i < n_left; ++i) {
+                if (match_idx[i] >= 0) {
+                    col.pushValue(typed_src[match_idx[i]]);
+                } else {
+                    // Push a NULL for unmatched rows
+                    col.pushNull();
+                }
+            }
+            out_cols.emplace_back(std::move(col));
+        }, right.getColumn(c));
+    }
+
+    return Table("asof_join_result", std::move(out_names), std::move(out_cols));
+}
+
+Table AsofJoinNode::execute(const ExecutionContext& ctx) {
+    // Fetch tables from catalog
+    auto lit = ctx.catalog.find(spec_.left_table);
+    auto rit = ctx.catalog.find(spec_.right_table);
+    if (lit == ctx.catalog.end())
+        throw std::runtime_error("AsofJoinNode: left table '" +
+                                 spec_.left_table + "' not in catalog");
+    if (rit == ctx.catalog.end())
+        throw std::runtime_error("AsofJoinNode: right table '" +
+                                 spec_.right_table + "' not in catalog");
+
+    const Table& left  = *lit->second;
+    const Table& right = *rit->second;
+
+    // CPU path (GPU path requires USE_CUDA and large tables)
+    return cpuAsofJoin(left, right);
+}
+
+std::string AsofJoinNode::toString(int indent) const {
+    std::string pad(indent * 2, ' ');
+    return pad + "AsofJoinNode(" + spec_.left_table + "." +
+           spec_.left_ts_col + " >= " + spec_.right_table + "." +
+           spec_.right_ts_col + ", key=" + spec_.left_key + "=" +
+           spec_.right_key + ")";
 }
 
 }  // namespace gpudb

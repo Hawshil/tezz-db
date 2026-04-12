@@ -34,6 +34,11 @@ bool Parser::isAggregateKeyword(TokenType t) const {
            t == TokenType::KW_MAX;
 }
 
+bool Parser::isWindowKeyword(TokenType t) const {
+    return t == TokenType::KW_SMA || t == TokenType::KW_EMA ||
+           t == TokenType::KW_ROLLING_STD;
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 SelectStmt Parser::parse(const std::vector<Token>& tokens) {
@@ -187,6 +192,31 @@ ExprPtr Parser::parseUnaryExpr() {
 }
 
 ExprPtr Parser::parsePrimaryExpr() {
+    // Window function: SMA / EMA / ROLLING_STD
+    if (isWindowKeyword(cur().type)) {
+        auto wexpr = std::make_unique<WindowExpr>();
+        wexpr->func = advance().value;                        // consume SMA|EMA|ROLLING_STD
+        expect(TokenType::LPAREN, "window function");
+        wexpr->arg = parseExpr();                             // column arg
+        if (match(TokenType::COMMA)) {
+            wexpr->window_size = std::stoi(
+                expect(TokenType::LIT_INTEGER, "window size").value);
+        }
+        expect(TokenType::RPAREN, "window function");
+        // OVER clause
+        expect(TokenType::KW_OVER, "window function OVER");
+        expect(TokenType::LPAREN, "OVER clause");
+        expect(TokenType::KW_ORDER, "OVER ORDER BY");
+        expect(TokenType::KW_BY,    "OVER ORDER BY");
+        wexpr->spec.order_by_col =
+            expect(TokenType::IDENTIFIER, "OVER ORDER BY column").value;
+        expect(TokenType::KW_ROWS, "OVER ROWS");
+        wexpr->spec.rows_preceding = std::stoi(
+            expect(TokenType::LIT_INTEGER, "ROWS N PRECEDING").value);
+        expect(TokenType::KW_PRECEDING, "ROWS N PRECEDING");
+        expect(TokenType::RPAREN, "OVER clause");
+        return wexpr;
+    }
     // Aggregate function
     if (isAggregateKeyword(cur().type)) {
         std::string func = advance().value;
@@ -230,6 +260,107 @@ ExprPtr Parser::parsePrimaryExpr() {
         return std::make_unique<ColumnRef>(name);
     }
     error("Expected expression, got " + cur().toString());
+}
+
+// ── ASOF JOIN parser ────────────────────────────────────────────────────────
+
+AsofJoinStmt Parser::parseAsofJoin(const std::vector<Token>& tokens) {
+    tokens_ = &tokens;
+    pos_ = 0;
+
+    AsofJoinStmt stmt;
+
+    // SELECT list: comma-separated table.column items (or *)
+    expect(TokenType::KW_SELECT, "ASOF JOIN SELECT");
+    std::vector<std::pair<std::string, std::string>> select_cols; // (alias, col)
+    bool select_star = false;
+    if (check(TokenType::OP_STAR)) {
+        advance();
+        select_star = true;
+    } else {
+        while (true) {
+            std::string tbl = expect(TokenType::IDENTIFIER, "select column").value;
+            expect(TokenType::DOT, "select column");
+            std::string col = expect(TokenType::IDENTIFIER, "select column").value;
+            select_cols.emplace_back(tbl, col);
+            if (!match(TokenType::COMMA)) break;
+        }
+    }
+
+    // FROM left_table [AS alias]
+    expect(TokenType::KW_FROM, "ASOF JOIN FROM");
+    stmt.left_table = expect(TokenType::IDENTIFIER, "left table").value;
+    if (match(TokenType::KW_AS))
+        stmt.left_alias = expect(TokenType::IDENTIFIER, "left alias").value;
+
+    // ASOF JOIN right_table [AS alias]
+    expect(TokenType::KW_ASOF, "ASOF keyword");
+    expect(TokenType::KW_JOIN, "JOIN keyword");
+    stmt.right_table = expect(TokenType::IDENTIFIER, "right table").value;
+    if (match(TokenType::KW_AS))
+        stmt.right_alias = expect(TokenType::IDENTIFIER, "right alias").value;
+
+    // ON left_alias.key_col = right_alias.key_col
+    expect(TokenType::KW_ON, "ON clause");
+    std::string on_tbl1 = expect(TokenType::IDENTIFIER, "ON left").value;
+    expect(TokenType::DOT, "ON left.col");
+    std::string on_col1 = expect(TokenType::IDENTIFIER, "ON left col").value;
+    expect(TokenType::OP_EQ, "ON =");
+    std::string on_tbl2 = expect(TokenType::IDENTIFIER, "ON right").value;
+    expect(TokenType::DOT, "ON right.col");
+    std::string on_col2 = expect(TokenType::IDENTIFIER, "ON right col").value;
+
+    // Resolve which side is left vs right based on alias
+    if (on_tbl1 == stmt.left_alias || on_tbl1 == stmt.left_table) {
+        stmt.left_key_col = on_col1;
+        stmt.right_key_col = on_col2;
+    } else {
+        stmt.left_key_col = on_col2;
+        stmt.right_key_col = on_col1;
+    }
+
+    // AS OF left_alias.ts_col >= right_alias.ts_col
+    expect(TokenType::KW_AS, "AS OF clause");
+    // "OF" is an IDENTIFIER, not a keyword
+    {
+        const Token& of_tok = expect(TokenType::IDENTIFIER, "AS OF clause");
+        if (of_tok.value != "OF")
+            error("Expected 'OF' after 'AS', got '" + of_tok.value + "'");
+    }
+    std::string as_tbl1 = expect(TokenType::IDENTIFIER, "AS OF left").value;
+    expect(TokenType::DOT, "AS OF left.col");
+    std::string as_col1 = expect(TokenType::IDENTIFIER, "AS OF left col").value;
+    expect(TokenType::OP_GTE, "AS OF >=");
+    std::string as_tbl2 = expect(TokenType::IDENTIFIER, "AS OF right").value;
+    expect(TokenType::DOT, "AS OF right.col");
+    std::string as_col2 = expect(TokenType::IDENTIFIER, "AS OF right col").value;
+
+    if (as_tbl1 == stmt.left_alias || as_tbl1 == stmt.left_table) {
+        stmt.left_ts_col = as_col1;
+        stmt.right_ts_col = as_col2;
+    } else {
+        stmt.left_ts_col = as_col2;
+        stmt.right_ts_col = as_col1;
+    }
+
+    // Optional TOLERANCE <integer>
+    if (match(TokenType::KW_TOLERANCE)) {
+        const Token& t = expect(TokenType::LIT_INTEGER, "TOLERANCE value");
+        stmt.tolerance_ns = std::stoll(t.value);
+    }
+
+    // Split select columns into left_cols / right_cols by alias
+    if (!select_star) {
+        for (const auto& [alias, col] : select_cols) {
+            if (alias == stmt.left_alias || alias == stmt.left_table)
+                stmt.left_cols.push_back(col);
+            else if (alias == stmt.right_alias || alias == stmt.right_table)
+                stmt.right_cols.push_back(col);
+        }
+    }
+
+    match(TokenType::SEMICOLON);
+    return stmt;
 }
 
 }  // namespace gpudb

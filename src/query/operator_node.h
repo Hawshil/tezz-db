@@ -96,6 +96,40 @@ private:
     std::vector<AggregateSpec> aggregates_;
 };
 
+/** Applies a window function over an ordered partition. */
+class GpuBackend;  // forward declaration
+
+class WindowNode : public OperatorNode {
+public:
+    static constexpr int GPU_THRESHOLD = 100'000;
+
+    struct WindowSpec {
+        std::string func;         // "SMA", "EMA", "ROLLING_STD"
+        std::string input_col;    // e.g. "price"
+        std::string order_by_col; // e.g. "ts"
+        std::string output_col;   // e.g. "SMA(price,20)"
+        int window_size;
+    };
+    explicit WindowNode(WindowSpec spec);
+    Table execute(const ExecutionContext& ctx) override;
+    std::string toString(int indent = 0) const override;
+
+    /** Attach an optional GPU backend; if set and n > GPU_THRESHOLD,
+     *  window computation is offloaded to the GPU. */
+    void setBackend(GpuBackend* b) { gpu_ = b; }
+
+private:
+    WindowSpec spec_;
+    GpuBackend* gpu_ = nullptr;
+    // Helper implementations declared here, defined in .cpp:
+    static std::vector<double> computeSMA(
+        const std::vector<double>& vals, int w);
+    static std::vector<double> computeEMA(
+        const std::vector<double>& vals, int w);
+    static std::vector<double> computeRollingStd(
+        const std::vector<double>& vals, int w);
+};
+
 /** Sorts rows by a column. */
 class SortNode : public OperatorNode {
 public:
@@ -154,6 +188,27 @@ public:
 private:
     std::string build_table_, build_col_;
     std::string probe_table_, probe_col_;
+};
+
+/** ASOF join: for each left row find the latest matching right row. */
+class AsofJoinNode : public OperatorNode {
+public:
+    struct Spec {
+        std::string left_table,  right_table;
+        std::string left_key,    right_key;     // equality columns
+        std::string left_ts_col, right_ts_col;  // timestamp columns
+        std::int64_t tolerance_ns = 0;
+    };
+    explicit AsofJoinNode(Spec spec);
+    Table execute(const ExecutionContext& ctx) override;
+    std::string toString(int indent = 0) const override;
+
+    void setBackend(GpuBackend* b) { gpu_ = b; }
+private:
+    Spec         spec_;
+    GpuBackend*  gpu_ = nullptr;
+    // CPU fallback: sort-merge binary search
+    Table cpuAsofJoin(const Table& left, const Table& right) const;
 };
 
 }  // namespace gpudb

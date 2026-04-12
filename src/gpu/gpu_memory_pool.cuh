@@ -26,12 +26,13 @@
  *   No individual free — reset between queries (arena-style)
  */
 #pragma once
-#include "cuda_utils.cuh"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
+
+#include "cuda_utils.cuh"
 
 namespace gpudb {
 
@@ -44,19 +45,18 @@ public:
      */
     explicit GpuMemoryPool(std::size_t pool_bytes = 2ULL * 1024 * 1024 * 1024,
                            std::size_t alignment = 256)
-        : total_(pool_bytes), alignment_(alignment), offset_(0),
-          peak_(0), alloc_count_(0) {
+        : total_(pool_bytes), alignment_(alignment), offset_(0), peak_(0), alloc_count_(0) {
         CUDA_CHECK(cudaMalloc(&base_, total_));
-        std::printf("[MemPool] Pre-allocated %.1f MB GPU memory at %p\n",
-                    total_ / 1e6, base_);
+        std::printf("[MemPool] Pre-allocated %.1f MB GPU memory at %p\n", total_ / 1e6, base_);
     }
 
     ~GpuMemoryPool() {
         if (base_) {
             cudaFree(base_);
-            std::printf("[MemPool] Released %.1f MB (peak usage: %.1f MB, "
-                        "%zu allocations served)\n",
-                        total_ / 1e6, peak_ / 1e6, alloc_count_);
+            std::printf(
+                "[MemPool] Released %.1f MB (peak usage: %.1f MB, "
+                "%zu allocations served)\n",
+                total_ / 1e6, peak_ / 1e6, alloc_count_);
         }
     }
 
@@ -64,8 +64,12 @@ public:
     GpuMemoryPool(const GpuMemoryPool&) = delete;
     GpuMemoryPool& operator=(const GpuMemoryPool&) = delete;
     GpuMemoryPool(GpuMemoryPool&& o) noexcept
-        : base_(o.base_), total_(o.total_), alignment_(o.alignment_),
-          offset_(o.offset_), peak_(o.peak_), alloc_count_(o.alloc_count_) {
+        : base_(o.base_),
+          total_(o.total_),
+          alignment_(o.alignment_),
+          offset_(o.offset_),
+          peak_(o.peak_),
+          alloc_count_(o.alloc_count_) {
         o.base_ = nullptr;
     }
 
@@ -77,7 +81,8 @@ public:
         // Align up
         std::size_t aligned = (n_bytes + alignment_ - 1) & ~(alignment_ - 1);
         if (offset_ + aligned > total_) {
-            std::fprintf(stderr, "[MemPool] OOM! Requested %zu bytes, "
+            std::fprintf(stderr,
+                         "[MemPool] OOM! Requested %zu bytes, "
                          "only %zu available (pool=%zu)\n",
                          n_bytes, total_ - offset_, total_);
             return nullptr;
@@ -85,14 +90,15 @@ public:
         void* ptr = static_cast<std::uint8_t*>(base_) + offset_;
         offset_ += aligned;
         ++alloc_count_;
-        if (offset_ > peak_) peak_ = offset_;
+        if (offset_ > peak_)
+            peak_ = offset_;
         return ptr;
     }
 
     /**
      * Typed allocate: returns T* for n elements.
      */
-    template<typename T>
+    template <typename T>
     T* allocate(std::size_t n_elements) {
         return static_cast<T*>(allocate(n_elements * sizeof(T)));
     }
@@ -101,27 +107,24 @@ public:
      * Reset the pool — all previous allocations become invalid.
      * Call this between queries to reuse memory without OS calls.
      */
-    void reset() {
-        offset_ = 0;
-    }
+    void reset() { offset_ = 0; }
 
     // ── Diagnostics ─────────────────────────────────────────────────────────
-    std::size_t used()      const { return offset_; }
+    std::size_t used() const { return offset_; }
     std::size_t available() const { return total_ - offset_; }
-    std::size_t total()     const { return total_; }
-    std::size_t peak()      const { return peak_; }
+    std::size_t total() const { return total_; }
+    std::size_t peak() const { return peak_; }
     std::size_t allocCount() const { return alloc_count_; }
 
     void printStats() const {
-        std::printf("[MemPool] Used: %.1f MB / %.1f MB (%.1f%%)  "
-                    "Peak: %.1f MB  Allocs: %zu\n",
-                    offset_ / 1e6, total_ / 1e6,
-                    100.0 * offset_ / total_,
-                    peak_ / 1e6, alloc_count_);
+        std::printf(
+            "[MemPool] Used: %.1f MB / %.1f MB (%.1f%%)  "
+            "Peak: %.1f MB  Allocs: %zu\n",
+            offset_ / 1e6, total_ / 1e6, 100.0 * offset_ / total_, peak_ / 1e6, alloc_count_);
     }
 
 private:
-    void*       base_  = nullptr;
+    void* base_ = nullptr;
     std::size_t total_;
     std::size_t alignment_;
     std::size_t offset_;
@@ -134,7 +137,7 @@ private:
  * Unlike GpuBuffer<T>, this does NOT call cudaMalloc/cudaFree.
  * The pool owns the underlying memory.
  */
-template<typename T>
+template <typename T>
 class PoolBuffer {
 public:
     PoolBuffer() = default;
@@ -144,25 +147,21 @@ public:
             throw std::runtime_error("GpuMemoryPool allocation failed");
     }
 
-    T*          data()  const { return ptr_; }
-    std::size_t size()  const { return size_; }
+    T* data() const { return ptr_; }
+    std::size_t size() const { return size_; }
     std::size_t bytes() const { return size_ * sizeof(T); }
 
     void copyFrom(const T* h_src, std::size_t count) {
-        CUDA_CHECK(cudaMemcpy(ptr_, h_src, count * sizeof(T),
-                               cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(ptr_, h_src, count * sizeof(T), cudaMemcpyHostToDevice));
     }
     void copyTo(T* h_dst, std::size_t count) const {
-        CUDA_CHECK(cudaMemcpy(h_dst, ptr_, count * sizeof(T),
-                               cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h_dst, ptr_, count * sizeof(T), cudaMemcpyDeviceToHost));
     }
-    void memsetZero() {
-        CUDA_CHECK(cudaMemset(ptr_, 0, size_ * sizeof(T)));
-    }
+    void memsetZero() { CUDA_CHECK(cudaMemset(ptr_, 0, size_ * sizeof(T))); }
 
 private:
-    T*          ptr_  = nullptr;
+    T* ptr_ = nullptr;
     std::size_t size_ = 0;
 };
 
-} // namespace gpudb
+}  // namespace gpudb

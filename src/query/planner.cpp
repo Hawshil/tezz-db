@@ -59,7 +59,16 @@ std::unique_ptr<OperatorNode> QueryPlanner::plan(const SelectStmt& stmt,
         node = std::move(agg_node);
     }
 
-    // 5. SortNode (if ORDER BY present).
+    // 5. WindowNode(s) (if window functions in SELECT list).
+    if (hasWindowExprs(stmt.select_list)) {
+        for (auto& wspec : extractWindowSpecs(stmt.select_list)) {
+            auto win = std::make_unique<WindowNode>(wspec);
+            win->setInput(std::move(node));
+            node = std::move(win);
+        }
+    }
+
+    // 6. SortNode (if ORDER BY present).
     if (!stmt.order_by_column.empty()) {
         auto sort = std::make_unique<SortNode>(stmt.order_by_column,
                                                 stmt.order_ascending);
@@ -67,7 +76,7 @@ std::unique_ptr<OperatorNode> QueryPlanner::plan(const SelectStmt& stmt,
         node = std::move(sort);
     }
 
-    // 6. LimitNode (if LIMIT present).
+    // 7. LimitNode (if LIMIT present).
     if (stmt.limit) {
         auto lim = std::make_unique<LimitNode>(*stmt.limit);
         lim->setInput(std::move(node));
@@ -92,6 +101,10 @@ void QueryPlanner::collectColumns(const Expr* expr, std::set<std::string>& cols)
         collectColumns(u->operand.get(), cols);
     } else if (auto* a = dynamic_cast<const AggExpr*>(expr)) {
         collectColumns(a->arg.get(), cols);
+    } else if (auto* w = dynamic_cast<const WindowExpr*>(expr)) {
+        collectColumns(w->arg.get(), cols);
+        if (!w->spec.order_by_col.empty())
+            cols.insert(w->spec.order_by_col);
     }
     // LiteralExpr, StarExpr — no columns to collect.
 }
@@ -134,6 +147,66 @@ std::vector<AggregateSpec> QueryPlanner::extractAggregates(
         specs.push_back(std::move(spec));
     }
     return specs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hasWindowExprs — check SELECT list for window functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool QueryPlanner::hasWindowExprs(const std::vector<SelectItem>& items) const {
+    for (const auto& item : items)
+        if (dynamic_cast<const WindowExpr*>(item.expr.get())) return true;
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extractWindowSpecs — build WindowNode::WindowSpec list from SELECT items
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::vector<WindowNode::WindowSpec> QueryPlanner::extractWindowSpecs(
+        const std::vector<SelectItem>& items) const {
+    std::vector<WindowNode::WindowSpec> specs;
+    for (const auto& item : items) {
+        auto* wexpr = dynamic_cast<const WindowExpr*>(item.expr.get());
+        if (!wexpr) continue;
+
+        WindowNode::WindowSpec spec;
+        spec.func = wexpr->func;
+        // Input column
+        if (wexpr->arg) {
+            if (auto* col = dynamic_cast<const ColumnRef*>(wexpr->arg.get()))
+                spec.input_col = col->column;
+            else
+                throw std::runtime_error("Planner: window function argument must be "
+                                         "a column reference (got complex expression)");
+        }
+        spec.order_by_col = wexpr->spec.order_by_col;
+        spec.window_size  = wexpr->window_size;
+        // Output name: use alias if provided, else auto-generate.
+        spec.output_col = item.alias.empty()
+            ? wexpr->toString()
+            : item.alias;
+        specs.push_back(std::move(spec));
+    }
+    return specs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// planAsofJoin
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::unique_ptr<OperatorNode> QueryPlanner::planAsofJoin(
+    const AsofJoinStmt& stmt, const Schema& /*left_schema*/)
+{
+    AsofJoinNode::Spec spec;
+    spec.left_table   = stmt.left_table;
+    spec.right_table  = stmt.right_table;
+    spec.left_key     = stmt.left_key_col;
+    spec.right_key    = stmt.right_key_col;
+    spec.left_ts_col  = stmt.left_ts_col;
+    spec.right_ts_col = stmt.right_ts_col;
+    spec.tolerance_ns = stmt.tolerance_ns;
+    return std::make_unique<AsofJoinNode>(std::move(spec));
 }
 
 }  // namespace gpudb

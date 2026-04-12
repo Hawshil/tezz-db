@@ -15,6 +15,9 @@ public:
     /** Parse a token stream into a SelectStmt AST. */
     SelectStmt parse(const std::vector<Token>& tokens);
 
+    /** Parse a token stream into an AsofJoinStmt AST. */
+    AsofJoinStmt parseAsofJoin(const std::vector<Token>& tokens);
+
 private:
     const std::vector<Token>* tokens_ = nullptr;
     std::size_t pos_ = 0;
@@ -41,6 +44,7 @@ private:
     ExprPtr              parseUnaryExpr();
     ExprPtr              parsePrimaryExpr();
     bool                 isAggregateKeyword(TokenType t) const;
+    bool                 isWindowKeyword(TokenType t) const;
 };
 
 }  // namespace gpudb

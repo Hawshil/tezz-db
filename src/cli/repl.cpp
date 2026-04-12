@@ -17,11 +17,13 @@
 #include "sql/lexer.h"
 #include "sql/parser.h"
 #include "query/planner.h"
+#include "query/operator_node.h"
 #include "backend/gpu_backend.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -115,8 +117,29 @@ private:
         }
 
         try {
-            // Auto-detect schema from CSV header
-            Schema schema = Schema::inferFromCSV(filepath);
+            // Read CSV header to build schema (default all columns to STRING)
+            std::ifstream header_file(filepath);
+            if (!header_file.is_open())
+                throw std::runtime_error("Cannot open file: " + filepath);
+            std::string header_line;
+            if (!std::getline(header_file, header_line))
+                throw std::runtime_error("Empty CSV file: " + filepath);
+            header_file.close();
+
+            // Parse header to get column names
+            SchemaBuilder sb;
+            std::istringstream hss(header_line);
+            std::string col_name;
+            while (std::getline(hss, col_name, ',')) {
+                // Trim whitespace
+                auto a = col_name.find_first_not_of(" \t\r\n\"");
+                auto b = col_name.find_last_not_of(" \t\r\n\"");
+                if (a != std::string::npos)
+                    col_name = col_name.substr(a, b - a + 1);
+                sb.addColumn(col_name, DataType::STRING, true);
+            }
+            Schema schema = sb.build();
+
             CSVReader reader(filepath, schema);
             auto t0 = std::chrono::high_resolution_clock::now();
             Table tbl = reader.read(tablename);
@@ -138,20 +161,37 @@ private:
         try {
             Lexer lexer;
             auto tokens = lexer.tokenize(sql);
-            Parser parser(tokens);
-            auto ast = parser.parse();
+            Parser parser;
+            SelectStmt ast = parser.parse(tokens);
 
             // Find the source table
-            auto it = tables_.find(ast->tableName);
+            auto it = tables_.find(ast.from_table);
             if (it == tables_.end()) {
                 std::printf("  ✗ Table '%s' not found. Use LOAD first.\n",
-                            ast->tableName.c_str());
+                            ast.from_table.c_str());
                 return;
             }
 
+            // Build schema from the loaded table
+            SchemaBuilder sb;
+            const auto& tbl = it->second;
+            for (std::size_t i = 0; i < tbl.numCols(); ++i) {
+                const auto& col = tbl.getColumn(i);
+                DataType dt = DataType::STRING;
+                if (std::holds_alternative<Int32Column>(col)) dt = DataType::INT32;
+                else if (std::holds_alternative<Int64Column>(col)) dt = DataType::INT64;
+                else if (std::holds_alternative<Float64Column>(col)) dt = DataType::FLOAT64;
+                sb.addColumn(tbl.columnNames()[i], dt);
+            }
+            Schema schema = sb.build();
+
             auto t0 = std::chrono::high_resolution_clock::now();
             QueryPlanner planner;
-            Table result = planner.execute(*ast, it->second);
+            auto plan = planner.plan(ast, schema);
+
+            ExecutionContext ctx;
+            ctx.catalog[ast.from_table] = &it->second;
+            Table result = plan->execute(ctx);
             auto t1 = std::chrono::high_resolution_clock::now();
             double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
@@ -169,23 +209,27 @@ private:
         try {
             Lexer lexer;
             auto tokens = lexer.tokenize(sql);
-            Parser parser(tokens);
-            auto ast = parser.parse();
+            Parser parser;
+            SelectStmt ast = parser.parse(tokens);
 
             std::printf("  Execution Plan:\n");
             std::printf("  ┌─ SELECT ");
-            for (auto& c : ast->selectCols) std::printf("%s ", c.c_str());
+            for (auto& item : ast.select_list)
+                std::printf("%s ", item.expr->toString().c_str());
             std::printf("\n");
-            std::printf("  ├─ FROM %s\n", ast->tableName.c_str());
-            if (ast->whereClause)
-                std::printf("  ├─ WHERE <predicate>\n");
-            if (!ast->groupByCols.empty()) {
+            std::printf("  ├─ FROM %s\n", ast.from_table.c_str());
+            if (ast.where_clause)
+                std::printf("  ├─ WHERE %s\n", ast.where_clause->toString().c_str());
+            if (!ast.group_by.empty()) {
                 std::printf("  ├─ GROUP BY ");
-                for (auto& c : ast->groupByCols) std::printf("%s ", c.c_str());
+                for (auto& c : ast.group_by) std::printf("%s ", c.c_str());
                 std::printf("\n");
             }
-            if (ast->limit > 0)
-                std::printf("  └─ LIMIT %d\n", ast->limit);
+            if (!ast.order_by_column.empty())
+                std::printf("  ├─ ORDER BY %s %s\n", ast.order_by_column.c_str(),
+                            ast.order_ascending ? "ASC" : "DESC");
+            if (ast.limit)
+                std::printf("  └─ LIMIT %lld\n", (long long)*ast.limit);
             else
                 std::printf("  └─ (no limit)\n");
         } catch (const std::exception& e) {
@@ -200,21 +244,45 @@ private:
         try {
             Lexer lexer;
             auto tokens = lexer.tokenize(sql);
-            Parser parser(tokens);
-            auto ast = parser.parse();
+            Parser parser;
+            SelectStmt ast = parser.parse(tokens);
 
-            auto it = tables_.find(ast->tableName);
+            auto it = tables_.find(ast.from_table);
             if (it == tables_.end()) {
-                std::printf("  ✗ Table '%s' not found.\n", ast->tableName.c_str());
+                std::printf("  ✗ Table '%s' not found.\n", ast.from_table.c_str());
                 return;
             }
 
-            QueryPlanner planner;
-            for (int i = 0; i < 5; ++i) planner.execute(*ast, it->second);
+            // Build schema
+            SchemaBuilder sb;
+            const auto& tbl = it->second;
+            for (std::size_t i = 0; i < tbl.numCols(); ++i) {
+                const auto& col = tbl.getColumn(i);
+                DataType dt = DataType::STRING;
+                if (std::holds_alternative<Int32Column>(col)) dt = DataType::INT32;
+                else if (std::holds_alternative<Int64Column>(col)) dt = DataType::INT64;
+                else if (std::holds_alternative<Float64Column>(col)) dt = DataType::FLOAT64;
+                sb.addColumn(tbl.columnNames()[i], dt);
+            }
+            Schema schema = sb.build();
 
+            QueryPlanner planner;
+
+            // Warmup
+            for (int i = 0; i < 5; ++i) {
+                auto plan = planner.plan(ast, schema);
+                ExecutionContext ctx;
+                ctx.catalog[ast.from_table] = &it->second;
+                plan->execute(ctx);
+            }
+
+            // Measured
             for (int i = 0; i < 10; ++i) {
+                auto plan = planner.plan(ast, schema);
+                ExecutionContext ctx;
+                ctx.catalog[ast.from_table] = &it->second;
                 auto t0 = std::chrono::high_resolution_clock::now();
-                planner.execute(*ast, it->second);
+                plan->execute(ctx);
                 auto t1 = std::chrono::high_resolution_clock::now();
                 times.push_back(
                     std::chrono::duration<double, std::milli>(t1 - t0).count());
@@ -230,6 +298,7 @@ private:
             std::printf("  │  P95:    %8.2f ms                      \n", times[9]);
             std::printf("  │  Rows:   %8zu                          \n", it->second.numRows());
             std::printf("  └───────────────────────────────────────────┘\n");
+            (void)backend;
         } catch (const std::exception& e) {
             std::printf("  ✗ Error: %s\n", e.what());
         }
@@ -264,7 +333,7 @@ private:
         for (std::size_t r = 0; r < maxRows; ++r) {
             std::printf("  │");
             for (std::size_t c = 0; c < tbl.numCols(); ++c) {
-                std::string val = tbl.getValueAsString(r, c);
+                std::string val = valueToString(getColumnValue(tbl.getColumn(c), r));
                 std::printf(" %-*s│", (int)widths[c], val.c_str());
             }
             std::printf("\n");

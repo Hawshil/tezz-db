@@ -36,6 +36,15 @@ public:
                              int* h_out_keys, double* h_out_sums, int ht_cap) = 0;
     virtual int   hashJoin(const int* d_build, int nb, const int* d_probe, int np,
                            int* d_out_b, int* d_out_p, int ht_cap) = 0;
+
+    // Window functions
+    virtual void windowSMA(const double* d_in, int n, int w,
+                           double* d_out) = 0;
+    virtual void windowEMA(const double* d_in, int n, int w,
+                           double* d_out) = 0;
+    virtual void windowRollingStd(const double* d_in, int n, int w,
+                                  double* d_out) = 0;
+
     virtual void  sync() = 0;
 };
 
@@ -57,6 +66,9 @@ public:
                      int* h_out_keys, double* h_out_sums, int ht_cap) override;
     int   hashJoin(const int* d_build, int nb, const int* d_probe, int np,
                    int* d_out_b, int* d_out_p, int ht_cap) override;
+    void windowSMA(const double* d_in, int n, int w, double* d_out) override;
+    void windowEMA(const double* d_in, int n, int w, double* d_out) override;
+    void windowRollingStd(const double* d_in, int n, int w, double* d_out) override;
     void  sync() override;
 };
 #endif

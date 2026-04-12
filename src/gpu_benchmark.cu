@@ -22,8 +22,8 @@ static void hdr(const char* t) { std::printf("\n═══ %s ═══\n", t); }
 // 1. Filter  (100 M elements, val > 0.5)
 // ─────────────────────────────────────────────────────────────────────────────
 static void benchFilter() {
-    hdr("GPU Filter — 100M doubles, val > 0.5");
-    const int N = 100'000'000;
+    hdr("GPU Filter — 50M doubles, val > 0.5");
+    const int N = 50'000'000;
     std::vector<double> h(N);
     std::srand(42);
     for (int i = 0; i < N; ++i) h[i] = (double)std::rand() / RAND_MAX;
@@ -52,8 +52,8 @@ static void benchFilter() {
 // 2. SUM  (500 M doubles)
 // ─────────────────────────────────────────────────────────────────────────────
 static void benchSum() {
-    hdr("GPU Sum — 500M doubles");
-    const int N = 500'000'000;
+    hdr("GPU Sum — 200M doubles");
+    const int N = 200'000'000;
     std::vector<double> h(N);
     for (int i = 0; i < N; ++i) h[i] = 1.0 / (i + 1);
 
@@ -78,8 +78,8 @@ static void benchSum() {
 // 3. GROUP BY + SUM  (100 M rows, 100 groups)
 // ─────────────────────────────────────────────────────────────────────────────
 static void benchGroupBy() {
-    hdr("GPU GroupBy — 100M rows, 100 groups");
-    const int N = 100'000'000, G = 100;
+    hdr("GPU GroupBy — 50M rows, 100 groups");
+    const int N = 50'000'000, G = 100;
     std::vector<int>    h_k(N);
     std::vector<double> h_v(N);
     std::srand(77);
@@ -146,8 +146,8 @@ static void benchJoin() {
 // 5. Async Pipeline  (500 M rows in 50 M chunks)
 // ─────────────────────────────────────────────────────────────────────────────
 static void benchPipeline() {
-    hdr("Async Pipeline — 500M rows in 50M-row chunks");
-    const int N = 500'000'000, CHUNK = 50'000'000, G = 100;
+    hdr("Async Pipeline — 200M rows in 25M-row chunks");
+    const int N = 200'000'000, CHUNK = 25'000'000, G = 100;
 
     // Pinned host memory for async DMA
     gpudb::GpuPinnedBuffer<double> h_vals(N);

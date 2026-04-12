@@ -5,6 +5,8 @@
  * Uses atomicCAS for key insertion and atomicAdd for value accumulation.
  * Shared-memory block-level partial aggregation reduces global atomic contention.
  */
+#include <algorithm>
+#include <vector>
 #include "cuda_utils.cuh"
 #include "gpu_ops.cuh"
 

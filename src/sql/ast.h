@@ -105,6 +105,35 @@ struct AggExpr : Expr {
     }
 };
 
+/** Window specification for OVER clause. */
+struct WindowSpec {
+    std::string order_by_col;       // column name for ORDER BY
+    int         rows_preceding = 0; // N in "ROWS N PRECEDING"; 0 = whole partition
+};
+
+/** Window function expression: SMA/EMA/ROLLING_STD(...) OVER (...). */
+struct WindowExpr : Expr {
+    std::string func;               // "SMA", "EMA", "ROLLING_STD"
+    ExprPtr     arg;                // the column argument, e.g. price
+    int         window_size = 0;    // second arg if provided as literal
+    WindowSpec  spec;
+    std::string toString(int = 0) const override {
+        return func + "(" + (arg ? arg->toString() : "") +
+               ", " + std::to_string(window_size) +
+               ") OVER (ORDER BY " + spec.order_by_col +
+               " ROWS " + std::to_string(spec.rows_preceding) +
+               " PRECEDING)";
+    }
+    ExprPtr clone() const override {
+        auto c = std::make_unique<WindowExpr>();
+        c->func = func;
+        c->arg  = arg ? arg->clone() : nullptr;
+        c->window_size = window_size;
+        c->spec = spec;
+        return c;
+    }
+};
+
 /** Wildcard (*) in SELECT *. */
 struct StarExpr : Expr {
     std::string toString(int = 0) const override { return "*"; }
@@ -153,6 +182,37 @@ struct SelectStmt {
         if (limit)
             s += "  LIMIT: " + std::to_string(*limit) + "\n";
         return s;
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASOF Join statement
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct AsofJoinStmt {
+    // Left table
+    std::string left_table;
+    std::string left_alias;     // e.g. "t"
+    // Right table
+    std::string right_table;
+    std::string right_alias;    // e.g. "q"
+    // Equality key columns (ON clause)
+    std::string left_key_col;   // e.g. "symbol"
+    std::string right_key_col;  // e.g. "symbol"
+    // Time columns (AS OF clause)
+    std::string left_ts_col;    // e.g. "ts" (on left table)
+    std::string right_ts_col;   // e.g. "ts" (on right table)
+    // Optional: columns to project from each side
+    std::vector<std::string> left_cols;   // empty = all
+    std::vector<std::string> right_cols;  // empty = all
+    // Optional tolerance in nanoseconds (0 = no limit)
+    std::int64_t tolerance_ns = 0;
+
+    std::string toString() const {
+        return "AsofJoinStmt: " + left_table + " ASOF JOIN " +
+               right_table + " ON " + left_key_col + "=" +
+               right_key_col + " AS OF " + left_ts_col +
+               ">=" + right_ts_col;
     }
 };
 

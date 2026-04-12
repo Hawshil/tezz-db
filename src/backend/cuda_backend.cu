@@ -42,5 +42,15 @@ int CudaBackend::hashJoin(const int* db, int nb, const int* dp, int np,
 }
 void CudaBackend::sync() { CUDA_CHECK(cudaDeviceSynchronize()); }
 
+void CudaBackend::windowSMA(const double* d_in, int n, int w, double* d_out) {
+    gpuSMA(d_in, n, w, d_out);
+}
+void CudaBackend::windowEMA(const double* d_in, int n, int w, double* d_out) {
+    gpuEMA(d_in, n, w, d_out);
+}
+void CudaBackend::windowRollingStd(const double* d_in, int n, int w, double* d_out) {
+    gpuRollingStd(d_in, n, w, d_out);
+}
+
 } // namespace gpudb
 #endif

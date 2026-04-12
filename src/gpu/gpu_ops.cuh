@@ -46,4 +46,18 @@ void benchGraphExecution(const int* h_keys, const double* h_vals, int n,
 // ── Arrow transfer strategies ───────────────────────────────────────────────
 void benchArrowTransferStrategies(const double* h_data, std::size_t n);
 
+// ── Window functions ────────────────────────────────────────────────────────
+void gpuSMA(const double* d_in, int n, int w, double* d_out);
+void gpuEMA(const double* d_in, int n, int w, double* d_out);
+void gpuRollingStd(const double* d_in, int n, int w, double* d_out);
+
+// ── ASOF Join ───────────────────────────────────────────────────────────
+void gpuAsofJoin(const std::int64_t* d_left_ts,  int n_left,
+                 const std::int64_t* d_right_ts,  int n_right,
+                 const std::int32_t* d_left_key,
+                 const std::int32_t* d_right_key,
+                 bool               use_key,
+                 std::int64_t       tolerance_ns,
+                 int*               d_out_right_idx);
+
 } // namespace gpudb

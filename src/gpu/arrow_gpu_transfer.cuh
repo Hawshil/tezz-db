@@ -26,6 +26,8 @@
  *   Mixed CPU/GPU or unknown pattern → (c) UVM
  */
 #pragma once
+
+#include <cstring>
 #include "cuda_utils.cuh"
 #include <cstddef>
 
@@ -60,7 +62,11 @@ T* arrowToDevice_UVM(const T* arrow_ptr, std::size_t n, int device = 0) {
     T* uvm_ptr = nullptr;
     CUDA_CHECK(cudaMallocManaged(&uvm_ptr, n * sizeof(T)));
     std::memcpy(uvm_ptr, arrow_ptr, n * sizeof(T));
-    CUDA_CHECK(cudaMemPrefetchAsync(uvm_ptr, n * sizeof(T), device));
+    // CUDA 13.0+: cudaMemPrefetchAsync requires cudaMemLocation struct
+    cudaMemLocation location = {};
+    location.type = cudaMemLocationTypeDevice;
+    location.id = device;
+    CUDA_CHECK(cudaMemPrefetchAsync(uvm_ptr, n * sizeof(T), location, 0));
     CUDA_CHECK(cudaDeviceSynchronize());
     return uvm_ptr;
 }

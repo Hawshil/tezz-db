@@ -11,17 +11,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(USE_CUDA)
+    # CUDA 13.0 only officially supports VS 2019-2022; allow VS 2026 (v18)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --allow-unsupported-compiler")
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86 89)
+    set(CMAKE_CUDA_ARCHITECTURES 75)
 endif()
 
-if(MSVC)
-    add_compile_options(/W4 /permissive-)
-else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
+# if(MSVC)
+#     add_compile_options(/W4 /permissive-)
+# else()
+#     add_compile_options(-Wall -Wextra -Wpedantic)
+# endif()
 
 # ── Optional: Apache Arrow ───────────────────────────────────────────────────
 find_package(Arrow QUIET)
@@ -76,6 +78,8 @@ if(USE_CUDA)
         src/gpu/gpu_graph.cu
         src/gpu/gpu_pool_benchmark.cu
         src/gpu/arrow_gpu_transfer.cu
+        src/gpu/gpu_window.cu
+        src/gpu/gpu_asof.cu
         src/backend/cuda_backend.cu
     )
     target_include_directories(gpudb_gpu PUBLIC src)
@@ -86,6 +90,21 @@ endif()
 # ── Demo executable (CPU SQL engine) ─────────────────────────────────────────
 add_executable(gpudb_demo src/main.cpp)
 target_link_libraries(gpudb_demo PRIVATE gpudb_core gpudb_io gpudb_sql gpudb_query)
+
+# ── Ring-buffer smoke test ───────────────────────────────────────────────────
+add_executable(ring_test src/ring_test.cpp)
+target_include_directories(ring_test PRIVATE src)
+target_link_libraries(ring_test PRIVATE gpudb_core)
+
+# ── Live tick-feed demo (CPU-only) ───────────────────────────────────────────
+add_executable(gpudb_tick_demo src/tick_feed_demo.cpp)
+target_include_directories(gpudb_tick_demo PRIVATE src)
+target_link_libraries(gpudb_tick_demo PRIVATE gpudb_core gpudb_sql gpudb_query)
+
+# ── ASOF join smoke test (CPU-only) ──────────────────────────────────────────
+add_executable(asof_join_test src/asof_join_test.cpp)
+target_include_directories(asof_join_test PRIVATE src)
+target_link_libraries(asof_join_test PRIVATE gpudb_core gpudb_sql gpudb_query)
 
 # ── Interactive CLI REPL (requires CUDA) ─────────────────────────────────────
 if(USE_CUDA)
@@ -118,9 +137,34 @@ if(USE_CUDA)
     target_compile_definitions(gpudb_report PRIVATE USE_CUDA=1)
 
     if(MSVC)
-        target_compile_options(gpudb_gpu_bench PRIVATE /O2)
+        target_compile_options(gpudb_gpu_bench PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/O2>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/O2>)
     else()
         target_compile_options(gpudb_gpu_bench PRIVATE -O2)
+    endif()
+    # ── Window function benchmark ────────────────────────────────────────────
+    add_executable(gpudb_window_bench src/gpu_window_benchmark.cu)
+    target_include_directories(gpudb_window_bench PRIVATE src)
+    target_link_libraries(gpudb_window_bench PRIVATE gpudb_gpu gpudb_core)
+    if(MSVC)
+        target_compile_options(gpudb_window_bench PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/O2>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/O2>)
+    else()
+        target_compile_options(gpudb_window_bench PRIVATE -O2)
+    endif()
+    # ── Finance benchmark (CPU vs GPU) ───────────────────────────────────────
+    add_executable(gpudb_finance_bench src/gpu_finance_bench.cu)
+    target_include_directories(gpudb_finance_bench PRIVATE src)
+    target_link_libraries(gpudb_finance_bench PRIVATE
+        gpudb_gpu gpudb_core gpudb_sql gpudb_query)
+    if(MSVC)
+        target_compile_options(gpudb_finance_bench PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/O2>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/O2>)
+    else()
+        target_compile_options(gpudb_finance_bench PRIVATE -O2)
     endif()
 endif()
 
@@ -173,5 +217,19 @@ if(BUILD_TESTS)
         target_compile_definitions(test_integration PRIVATE GPUDB_HAS_ARROW=1)
     endif()
     add_test(NAME integration COMMAND test_integration)
+
+    # Ring-buffer concurrency tests (CPU-only)
+    add_executable(test_ring_buffer tests/ring_buffer_test.cpp)
+    target_include_directories(test_ring_buffer PRIVATE src)
+    target_link_libraries(test_ring_buffer PRIVATE
+        GTest::gtest GTest::gtest_main gpudb_core)
+    add_test(NAME ring_buffer COMMAND test_ring_buffer)
+
+    # Finance integration tests (CPU-only)
+    add_executable(test_finance tests/finance_test.cpp)
+    target_include_directories(test_finance PRIVATE src)
+    target_link_libraries(test_finance PRIVATE
+        GTest::gtest GTest::gtest_main gpudb_core gpudb_sql gpudb_query)
+    add_test(NAME finance COMMAND test_finance)
 endif()
 

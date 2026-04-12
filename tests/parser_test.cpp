@@ -113,3 +113,54 @@ TEST(Parser, InvalidSyntaxThrows) {
     Parser parser(tokens);
     EXPECT_THROW(parser.parse(), std::exception);
 }
+
+// ── ASOF JOIN ───────────────────────────────────────────────────────────────
+
+TEST(Parser, AsofJoin) {
+    Lexer lex;
+    auto tokens = lex.tokenize(
+        "SELECT t.ts, t.price, q.bid, q.ask "
+        "FROM trades AS t "
+        "ASOF JOIN quotes AS q "
+        "ON t.symbol = q.symbol "
+        "AS OF t.ts >= q.ts");
+    Parser p;
+    auto stmt = p.parseAsofJoin(tokens);
+
+    EXPECT_EQ(stmt.left_table, "trades");
+    EXPECT_EQ(stmt.left_alias, "t");
+    EXPECT_EQ(stmt.right_table, "quotes");
+    EXPECT_EQ(stmt.right_alias, "q");
+    EXPECT_EQ(stmt.left_key_col, "symbol");
+    EXPECT_EQ(stmt.right_key_col, "symbol");
+    EXPECT_EQ(stmt.left_ts_col, "ts");
+    EXPECT_EQ(stmt.right_ts_col, "ts");
+    EXPECT_EQ(stmt.tolerance_ns, 0);
+
+    // Check projected columns
+    ASSERT_EQ(stmt.left_cols.size(), 2u);
+    EXPECT_EQ(stmt.left_cols[0], "ts");
+    EXPECT_EQ(stmt.left_cols[1], "price");
+    ASSERT_EQ(stmt.right_cols.size(), 2u);
+    EXPECT_EQ(stmt.right_cols[0], "bid");
+    EXPECT_EQ(stmt.right_cols[1], "ask");
+}
+
+TEST(Parser, AsofJoinWithTolerance) {
+    Lexer lex;
+    auto tokens = lex.tokenize(
+        "SELECT * FROM trades AS t "
+        "ASOF JOIN quotes AS q "
+        "ON t.symbol = q.symbol "
+        "AS OF t.ts >= q.ts "
+        "TOLERANCE 1000");
+    Parser p;
+    auto stmt = p.parseAsofJoin(tokens);
+
+    EXPECT_EQ(stmt.left_table, "trades");
+    EXPECT_EQ(stmt.right_table, "quotes");
+    EXPECT_EQ(stmt.tolerance_ns, 1000);
+    // SELECT * → empty left/right cols
+    EXPECT_TRUE(stmt.left_cols.empty());
+    EXPECT_TRUE(stmt.right_cols.empty());
+}
