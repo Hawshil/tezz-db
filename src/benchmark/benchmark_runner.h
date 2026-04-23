@@ -12,6 +12,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <ctime>
 
 namespace gpudb {
 
@@ -47,6 +48,11 @@ public:
         if (platform == "HIP")  r.hip_tag  = fmtMs(med);
         if (platform == "SYCL") r.sycl_tag = fmtMs(med);
         results_.push_back(r);
+
+        // Live-stream this result as a JSON line to the .jsonl file
+        if (!jsonl_path_.empty()) {
+            streamJsonLine(r);
+        }
     }
 
     void printTable() const {
@@ -73,11 +79,63 @@ public:
         std::printf("  Results written to %s\n", path.c_str());
     }
 
+    /// Set the path for the live JSON Lines stream file (.jsonl)
+    void enableJsonStream(const std::string& jsonl_path) {
+        jsonl_path_ = jsonl_path;
+        // Truncate the file at the start of a new run
+        std::ofstream f(jsonl_path_, std::ios::trunc);
+    }
+
+    /// Write a complete JSON array of all results
+    void writeJSON(const std::string& path) const {
+        std::ofstream f(path);
+        f << "[\n";
+        for (std::size_t i = 0; i < results_.size(); ++i) {
+            auto& r = results_[i];
+            char buf[1024];
+            std::snprintf(buf, sizeof(buf),
+                "  {\"type\":\"benchmark\",\"operation\":\"%s\",\"rows\":%d,"
+                "\"cpu_ms\":%.2f,\"gpu_ms\":%.2f,\"speedup\":%.2f,"
+                "\"bandwidth_gbps\":%.2f,\"mean_ms\":%.2f,"
+                "\"median_ms\":%.2f,\"p95_ms\":%.2f}",
+                r.op.c_str(), r.rows, r.cpu_ms, r.median_ms,
+                r.gpu_speedup, r.bw_gbps, r.mean_ms,
+                r.median_ms, r.p95_ms);
+            f << buf;
+            if (i + 1 < results_.size()) f << ",";
+            f << "\n";
+        }
+        f << "]\n";
+        std::printf("  JSON results written to %s\n", path.c_str());
+    }
+
 private:
     std::vector<BenchResult> results_;
+    std::string jsonl_path_;
+
     static std::string fmtMs(double v) {
         char buf[16]; std::snprintf(buf, sizeof(buf), "%.1f ms", v);
         return buf;
+    }
+
+    /// Append a single JSON line for live streaming
+    void streamJsonLine(const BenchResult& r) {
+        std::ofstream f(jsonl_path_, std::ios::app);
+        auto now = std::chrono::system_clock::now();
+        auto epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        char buf[1024];
+        std::snprintf(buf, sizeof(buf),
+            "{\"type\":\"benchmark\",\"operation\":\"%s\",\"rows\":%d,"
+            "\"cpu_ms\":%.2f,\"gpu_ms\":%.2f,\"speedup\":%.2f,"
+            "\"bandwidth_gbps\":%.2f,\"mean_ms\":%.2f,"
+            "\"median_ms\":%.2f,\"p95_ms\":%.2f,"
+            "\"timestamp\":%lld}",
+            r.op.c_str(), r.rows, r.cpu_ms, r.median_ms,
+            r.gpu_speedup, r.bw_gbps, r.mean_ms,
+            r.median_ms, r.p95_ms, (long long)epoch_ms);
+        f << buf << "\n";
+        f.flush();
     }
 };
 

@@ -1,0 +1,6 @@
+{"type":"benchmark","operation":"Filter-1M","rows":1000000,"cpu_ms":11.37,"gpu_ms":1.79,"speedup":6.36,"bandwidth_gbps":4.48,"mean_ms":1.84,"median_ms":1.79,"p95_ms":2.19,"timestamp":1776927581179}
+{"type":"benchmark","operation":"Sum-1M","rows":1000000,"cpu_ms":1.52,"gpu_ms":0.75,"speedup":2.03,"bandwidth_gbps":10.70,"mean_ms":0.75,"median_ms":0.75,"p95_ms":0.88,"timestamp":1776927581220}
+{"type":"benchmark","operation":"Filter-10M","rows":10000000,"cpu_ms":114.28,"gpu_ms":6.94,"speedup":16.47,"bandwidth_gbps":11.53,"mean_ms":6.85,"median_ms":6.94,"p95_ms":7.37,"timestamp":1776927582294}
+{"type":"benchmark","operation":"Sum-10M","rows":10000000,"cpu_ms":15.43,"gpu_ms":1.85,"speedup":8.36,"bandwidth_gbps":43.35,"mean_ms":1.84,"median_ms":1.85,"p95_ms":1.97,"timestamp":1776927582578}
+{"type":"benchmark","operation":"Filter-100M","rows":100000000,"cpu_ms":1177.48,"gpu_ms":51.29,"speedup":22.96,"bandwidth_gbps":15.60,"mean_ms":51.33,"median_ms":51.29,"p95_ms":52.68,"timestamp":1776927590908}
+{"type":"benchmark","operation":"Sum-100M","rows":100000000,"cpu_ms":154.23,"gpu_ms":7.94,"speedup":19.43,"bandwidth_gbps":100.81,"mean_ms":7.99,"median_ms":7.94,"p95_ms":8.36,"timestamp":1776927593436}

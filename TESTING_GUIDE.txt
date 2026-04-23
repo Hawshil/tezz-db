@@ -1,0 +1,26 @@
+cd "c:\Users\12345\Downloads\CUDA GPU DB"
+
+
+.\build\Release\gpudb_demo.exe
+
+.\build\Release\gpudb_bench.exe
+
+.\build\Release\gpudb_gpu_bench.exe
+
+.\build\Release\gpudb_report.exe
+
+.\build\Release\gpudb_cli.exe
+
+a) ASOF Join Test:
+   .\build\Debug\asof_join_test.exe
+
+b) Ring Buffer Test:
+   .\build\Debug\ring_test.exe
+
+c) Tick Demo (finance data simulation):
+   .\build\Debug\gpudb_tick_demo.exe
+
+a) cd dashboard
+   python serve.py
+
+   http://localhost:8080

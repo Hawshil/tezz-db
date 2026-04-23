@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="GPUDB Real-Time Benchmark Dashboard — Live GPU vs CPU performance visualization with D3.js">
+    <title>GPUDB — Benchmark Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+
+    <!-- ── Header ──────────────────────────────────────────────────────── -->
+    <header class="header" id="header">
+        <div class="header-brand">
+            <div class="header-logo">G</div>
+            <div>
+                <div class="header-title"><span>GPUDB</span> Benchmark Dashboard</div>
+                <div class="header-subtitle">Real-Time GPU vs CPU Performance Analytics</div>
+            </div>
+        </div>
+        <div class="header-controls">
+            <div class="connection-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Idle</span>
+            </div>
+            <button class="btn" id="btn-simulate">▶ Simulate</button>
+            <label class="btn btn-upload">
+                📂 Import CSV
+                <input type="file" id="file-input" accept=".csv,.json,.jsonl">
+            </label>
+            <button class="btn" id="btn-clear">✕ Clear</button>
+        </div>
+    </header>
+
+    <!-- ── KPI Strip ───────────────────────────────────────────────────── -->
+    <div class="kpi-strip">
+        <div class="kpi-card">
+            <div class="kpi-label">Peak Speedup</div>
+            <div class="kpi-value cyan" id="kpi-peak-speedup">—</div>
+            <div class="kpi-delta">GPU vs CPU</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Benchmarks Run</div>
+            <div class="kpi-value violet" id="kpi-benchmarks">—</div>
+            <div class="kpi-delta">operations completed</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Last GPU Time</div>
+            <div class="kpi-value green" id="kpi-last-gpu">—</div>
+            <div class="kpi-delta" id="kpi-gpu-util">— util</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Peak PCIe Bandwidth</div>
+            <div class="kpi-value orange" id="kpi-peak-bw">—</div>
+            <div class="kpi-delta" id="kpi-vram">— VRAM</div>
+        </div>
+    </div>
+
+    <!-- ── Chart Grid ──────────────────────────────────────────────────── -->
+    <div class="chart-grid">
+
+        <!-- Chart 1: CPU vs GPU Bar Chart -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <div class="chart-title-icon cyan-bg">⚡</div>
+                    CPU vs GPU Execution Time
+                </div>
+                <div class="chart-badge">Log Scale</div>
+            </div>
+            <div class="chart-container" id="bar-chart"></div>
+            <div class="chart-legend">
+                <div class="legend-item">
+                    <div class="legend-dot gpu"></div>
+                    <span>GPU (CUDA)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot cpu"></div>
+                    <span>CPU Baseline</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart 2: Speedup Gauge + Results Table -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <div class="chart-title-icon green-bg">🚀</div>
+                    GPU Speedup
+                </div>
+                <div class="chart-badge">Real-Time</div>
+            </div>
+            <div class="gauge-panel">
+                <div class="gauge-arc-container" id="speedup-gauge"></div>
+                <div class="gauge-value" id="gauge-speedup-value">—</div>
+                <div class="gauge-label">GPU Speedup Multiplier</div>
+                <div class="gauge-op-name" id="gauge-op-name">Waiting...</div>
+            </div>
+            <div class="results-table-container">
+                <table class="results-mini-table">
+                    <thead>
+                        <tr>
+                            <th>Operation</th>
+                            <th>CPU (ms)</th>
+                            <th>GPU (ms)</th>
+                            <th>Speedup</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Chart 3: Bandwidth Area Chart -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <div class="chart-title-icon violet-bg">📊</div>
+                    PCIe Bandwidth
+                </div>
+                <div class="chart-badge">GB/s</div>
+            </div>
+            <div class="chart-container" id="bandwidth-chart"></div>
+        </div>
+
+        <!-- Chart 4: GPU Health Timeline -->
+        <div class="chart-panel">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <div class="chart-title-icon orange-bg">🔥</div>
+                    GPU Utilization & VRAM
+                </div>
+                <div class="chart-badge">Live</div>
+            </div>
+            <div class="chart-container" id="gpu-health-chart"></div>
+            <div class="chart-legend">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:#22c55e"></div>
+                    <span>VRAM Usage</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:#00f0ff;border-radius:50%"></div>
+                    <span>GPU Utilization</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+
+
+    <!-- ── Tooltip ─────────────────────────────────────────────────────── -->
+    <div class="d3-tooltip" id="tooltip"></div>
+
+    <!-- ── Toast ───────────────────────────────────────────────────────── -->
+    <div class="toast" id="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
