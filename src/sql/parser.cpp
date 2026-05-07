@@ -3,40 +3,50 @@
  * @brief Recursive-descent SQL parser implementation.
  */
 #include "parser.h"
+
 #include <stdexcept>
 
 namespace gpudb {
 
 // ── Token navigation ────────────────────────────────────────────────────────
 
-const Token& Parser::cur() const { return (*tokens_)[pos_]; }
+const Token& Parser::cur() const {
+    return (*tokens_)[pos_];
+}
 const Token& Parser::peek(std::size_t ahead) const {
     std::size_t idx = pos_ + ahead;
     return idx < tokens_->size() ? (*tokens_)[idx] : tokens_->back();
 }
-const Token& Parser::advance() { return (*tokens_)[pos_++]; }
-bool Parser::check(TokenType t) const { return cur().type == t; }
-bool Parser::match(TokenType t) { if (check(t)) { advance(); return true; } return false; }
+const Token& Parser::advance() {
+    return (*tokens_)[pos_++];
+}
+bool Parser::check(TokenType t) const {
+    return cur().type == t;
+}
+bool Parser::match(TokenType t) {
+    if (check(t)) {
+        advance();
+        return true;
+    }
+    return false;
+}
 const Token& Parser::expect(TokenType t, const std::string& ctx) {
     if (!check(t))
-        error("Expected " + token_type_name(t) + " in " + ctx +
-              ", got " + cur().toString());
+        error("Expected " + token_type_name(t) + " in " + ctx + ", got " + cur().toString());
     return advance();
 }
 void Parser::error(const std::string& msg) const {
-    throw std::runtime_error("Parser error at " + std::to_string(cur().line) +
-                             ":" + std::to_string(cur().col) + " — " + msg);
+    throw std::runtime_error("Parser error at " + std::to_string(cur().line) + ":" +
+                             std::to_string(cur().col) + " — " + msg);
 }
 
 bool Parser::isAggregateKeyword(TokenType t) const {
-    return t == TokenType::KW_SUM  || t == TokenType::KW_COUNT ||
-           t == TokenType::KW_AVG  || t == TokenType::KW_MIN   ||
-           t == TokenType::KW_MAX;
+    return t == TokenType::KW_SUM || t == TokenType::KW_COUNT || t == TokenType::KW_AVG ||
+           t == TokenType::KW_MIN || t == TokenType::KW_MAX;
 }
 
 bool Parser::isWindowKeyword(TokenType t) const {
-    return t == TokenType::KW_SMA || t == TokenType::KW_EMA ||
-           t == TokenType::KW_ROLLING_STD;
+    return t == TokenType::KW_SMA || t == TokenType::KW_EMA || t == TokenType::KW_ROLLING_STD;
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -65,7 +75,7 @@ SelectStmt Parser::parseSelect() {
 
     // GROUP BY (optional)
     if (check(TokenType::KW_GROUP)) {
-        advance(); // GROUP
+        advance();  // GROUP
         expect(TokenType::KW_BY, "GROUP BY");
         stmt.group_by.push_back(expect(TokenType::IDENTIFIER, "GROUP BY").value);
         while (match(TokenType::COMMA))
@@ -74,12 +84,17 @@ SelectStmt Parser::parseSelect() {
 
     // ORDER BY (optional)
     if (check(TokenType::KW_ORDER)) {
-        advance(); // ORDER
+        advance();  // ORDER
         expect(TokenType::KW_BY, "ORDER BY");
         stmt.order_by_column = expect(TokenType::IDENTIFIER, "ORDER BY").value;
         stmt.order_ascending = true;
-        if (check(TokenType::KW_ASC))  { advance(); stmt.order_ascending = true; }
-        else if (check(TokenType::KW_DESC)) { advance(); stmt.order_ascending = false; }
+        if (check(TokenType::KW_ASC)) {
+            advance();
+            stmt.order_ascending = true;
+        } else if (check(TokenType::KW_DESC)) {
+            advance();
+            stmt.order_ascending = false;
+        }
     }
 
     // LIMIT (optional)
@@ -119,7 +134,9 @@ SelectItem Parser::parseSelectItem() {
 
 // ── Expression parsing (precedence climbing) ────────────────────────────────
 
-ExprPtr Parser::parseExpr() { return parseOrExpr(); }
+ExprPtr Parser::parseExpr() {
+    return parseOrExpr();
+}
 
 ExprPtr Parser::parseOrExpr() {
     auto left = parseAndExpr();
@@ -152,9 +169,8 @@ ExprPtr Parser::parseNotExpr() {
 
 ExprPtr Parser::parseComparisonExpr() {
     auto left = parseAddSubExpr();
-    if (check(TokenType::OP_EQ)  || check(TokenType::OP_NEQ) ||
-        check(TokenType::OP_LT)  || check(TokenType::OP_GT)  ||
-        check(TokenType::OP_LTE) || check(TokenType::OP_GTE)) {
+    if (check(TokenType::OP_EQ) || check(TokenType::OP_NEQ) || check(TokenType::OP_LT) ||
+        check(TokenType::OP_GT) || check(TokenType::OP_LTE) || check(TokenType::OP_GTE)) {
         std::string op = advance().value;
         auto right = parseAddSubExpr();
         left = std::make_unique<BinaryExpr>(op, std::move(left), std::move(right));
@@ -195,24 +211,22 @@ ExprPtr Parser::parsePrimaryExpr() {
     // Window function: SMA / EMA / ROLLING_STD
     if (isWindowKeyword(cur().type)) {
         auto wexpr = std::make_unique<WindowExpr>();
-        wexpr->func = advance().value;                        // consume SMA|EMA|ROLLING_STD
+        wexpr->func = advance().value;  // consume SMA|EMA|ROLLING_STD
         expect(TokenType::LPAREN, "window function");
-        wexpr->arg = parseExpr();                             // column arg
+        wexpr->arg = parseExpr();  // column arg
         if (match(TokenType::COMMA)) {
-            wexpr->window_size = std::stoi(
-                expect(TokenType::LIT_INTEGER, "window size").value);
+            wexpr->window_size = std::stoi(expect(TokenType::LIT_INTEGER, "window size").value);
         }
         expect(TokenType::RPAREN, "window function");
         // OVER clause
         expect(TokenType::KW_OVER, "window function OVER");
         expect(TokenType::LPAREN, "OVER clause");
         expect(TokenType::KW_ORDER, "OVER ORDER BY");
-        expect(TokenType::KW_BY,    "OVER ORDER BY");
-        wexpr->spec.order_by_col =
-            expect(TokenType::IDENTIFIER, "OVER ORDER BY column").value;
+        expect(TokenType::KW_BY, "OVER ORDER BY");
+        wexpr->spec.order_by_col = expect(TokenType::IDENTIFIER, "OVER ORDER BY column").value;
         expect(TokenType::KW_ROWS, "OVER ROWS");
-        wexpr->spec.rows_preceding = std::stoi(
-            expect(TokenType::LIT_INTEGER, "ROWS N PRECEDING").value);
+        wexpr->spec.rows_preceding =
+            std::stoi(expect(TokenType::LIT_INTEGER, "ROWS N PRECEDING").value);
         expect(TokenType::KW_PRECEDING, "ROWS N PRECEDING");
         expect(TokenType::RPAREN, "OVER clause");
         return wexpr;
@@ -223,7 +237,7 @@ ExprPtr Parser::parsePrimaryExpr() {
         expect(TokenType::LPAREN, "aggregate function");
         ExprPtr arg = nullptr;
         if (check(TokenType::OP_STAR)) {
-            advance(); // consume *
+            advance();  // consume *
         } else {
             arg = parseExpr();
         }
@@ -272,7 +286,7 @@ AsofJoinStmt Parser::parseAsofJoin(const std::vector<Token>& tokens) {
 
     // SELECT list: comma-separated table.column items (or *)
     expect(TokenType::KW_SELECT, "ASOF JOIN SELECT");
-    std::vector<std::pair<std::string, std::string>> select_cols; // (alias, col)
+    std::vector<std::pair<std::string, std::string>> select_cols;  // (alias, col)
     bool select_star = false;
     if (check(TokenType::OP_STAR)) {
         advance();
@@ -283,7 +297,8 @@ AsofJoinStmt Parser::parseAsofJoin(const std::vector<Token>& tokens) {
             expect(TokenType::DOT, "select column");
             std::string col = expect(TokenType::IDENTIFIER, "select column").value;
             select_cols.emplace_back(tbl, col);
-            if (!match(TokenType::COMMA)) break;
+            if (!match(TokenType::COMMA))
+                break;
         }
     }
 
